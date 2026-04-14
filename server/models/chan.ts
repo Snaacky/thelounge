@@ -307,7 +307,11 @@ class Chan {
 			this.waitingForPlaybackBoundary = true;
 			this.playbackBoundaryTime = undefined;
 
-			const messages = client.messageProvider.getMessages(network, this, () => client.idMsg++);
+			const messages = client.messageProvider.getMessages(
+				network,
+				this,
+				() => client.idMsg++
+			);
 
 			if (messages.length > 0) {
 				this.messages = messages.concat(this.messages);
@@ -426,13 +430,7 @@ function getLatestMessageTime(messages: Msg[]) {
 }
 
 function requestZncPlayback(channel: Chan, network: Network, from: number, to?: number) {
-	const args = [
-		"ZNC",
-		"*playback",
-		"PLAY",
-		channel.name,
-		formatZncPlaybackTimestamp(from),
-	];
+	const args = ["ZNC", "*playback", "PLAY", channel.name, formatZncPlaybackTimestamp(from)];
 
 	if (to !== undefined) {
 		args.push(formatZncPlaybackTimestamp(to));

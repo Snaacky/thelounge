@@ -40,6 +40,7 @@ export default <IrcEventHandler>function (irc, network) {
 			if (!network.reconnectPlaybackRequested) {
 				chan.syncZncPlayback(network);
 			}
+
 			network.irc.raw("MODE", chan.name);
 		}
 
