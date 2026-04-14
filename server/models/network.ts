@@ -121,6 +121,8 @@ class Network {
 	chanCache!: Chan[];
 	ignoreList!: IgnoreList;
 	keepNick!: string | null;
+	hasCompletedRegistration!: boolean;
+	reconnectPlaybackRequested!: boolean;
 
 	status!: NetworkStatus;
 
@@ -173,6 +175,8 @@ class Network {
 			chanCache: [],
 			ignoreList: [],
 			keepNick: null,
+			hasCompletedRegistration: false,
+			reconnectPlaybackRequested: false,
 		});
 
 		if (!this.uuid) {
@@ -671,6 +675,60 @@ class Network {
 	getLobby() {
 		return this.channels[0];
 	}
+
+	requestZncPlaybackForReconnect() {
+		if (!this.hasCompletedRegistration) {
+			this.hasCompletedRegistration = true;
+			this.reconnectPlaybackRequested = false;
+			return false;
+		}
+
+		this.reconnectPlaybackRequested = false;
+
+		if (!this.irc?.network.cap.isEnabled("znc.in/playback")) {
+			return false;
+		}
+
+		const latestMessageTime = this.channels.reduce<number>((latestTime, chan) => {
+			if (!chan.isLoggable()) {
+				return latestTime;
+			}
+
+			for (let i = chan.messages.length - 1; i >= 0; i--) {
+				const msg = chan.messages[i];
+
+				if (msg.isLoggable()) {
+					return Math.max(latestTime, msg.time.getTime());
+				}
+			}
+
+			return latestTime;
+		}, 0);
+
+		this.irc.raw(
+			"ZNC",
+			"*playback",
+			"PLAY",
+			"*",
+			formatZncPlaybackTimestamp(latestMessageTime)
+		);
+		this.reconnectPlaybackRequested = true;
+
+		return true;
+	}
+
+	resetZncReconnectPlayback() {
+		this.reconnectPlaybackRequested = false;
+	}
+}
+
+function formatZncPlaybackTimestamp(time: number) {
+	if (time === 0) {
+		return "0";
+	}
+
+	const timestamp = (time / 1000).toFixed(3);
+	return timestamp.replace(/\.?0+$/, "");
 }
 
 export default Network;

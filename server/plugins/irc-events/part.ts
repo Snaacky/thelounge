@@ -26,6 +26,7 @@ export default <IrcEventHandler>function (irc, network) {
 			from: user,
 			self: data.nick === irc.user.nick,
 		});
+		chan.recordPlaybackBoundary(data.time);
 		chan.pushMessage(client, msg);
 
 		if (data.nick === irc.user.nick) {

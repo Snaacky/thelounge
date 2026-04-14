@@ -85,6 +85,7 @@ export default <IrcEventHandler>function (irc, network) {
 			msg.users = users;
 		}
 
+		targetChan.recordPlaybackBoundary(data.time);
 		targetChan.pushMessage(client, msg);
 
 		let usersUpdated = false;

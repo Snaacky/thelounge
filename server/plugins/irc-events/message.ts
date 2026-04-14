@@ -171,7 +171,12 @@ export default <IrcEventHandler>function (irc, network) {
 			LinkPrefetch(client, chan, msg, cleanMessage);
 		}
 
-		chan.pushMessage(client, msg, !msg.self);
+		chan.recordPlaybackBoundary(data.time);
+		const pushed = chan.pushMessage(client, msg, !msg.self);
+
+		if (!pushed) {
+			return;
+		}
 
 		// Do not send notifications if the channel is muted or for messages older than 15 minutes (znc buffer for example)
 		if (!chan.muted && msg.highlight && (!data.time || data.time > Date.now() - 900000)) {

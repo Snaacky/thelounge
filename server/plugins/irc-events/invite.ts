@@ -24,6 +24,7 @@ export default <IrcEventHandler>function (irc, network) {
 			highlight: invitedYou,
 			invitedYou: invitedYou,
 		});
+		chan.recordPlaybackBoundary(data.time);
 		chan.pushMessage(client, msg);
 	});
 };

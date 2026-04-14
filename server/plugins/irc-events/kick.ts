@@ -24,6 +24,7 @@ export default <IrcEventHandler>function (irc, network) {
 			highlight: data.kicked === irc.user.nick,
 			self: data.nick === irc.user.nick,
 		});
+		chan.recordPlaybackBoundary(data.time);
 		chan.pushMessage(client, msg);
 
 		if (data.kicked === irc.user.nick) {

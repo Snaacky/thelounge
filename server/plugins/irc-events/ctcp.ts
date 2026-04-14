@@ -38,6 +38,7 @@ export default <IrcEventHandler>function (irc, network) {
 			from: chan.getUser(data.nick),
 			ctcpMessage: data.message,
 		});
+		chan.recordPlaybackBoundary(data.time);
 		chan.pushMessage(client, msg, true);
 	});
 

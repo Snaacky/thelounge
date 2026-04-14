@@ -20,6 +20,8 @@ export default <IrcEventHandler>function (irc, network) {
 	);
 
 	irc.on("registered", function () {
+		const requestedReconnectPlayback = network.requestZncPlaybackForReconnect();
+
 		if (network.irc.network.cap.enabled.length > 0) {
 			network.getLobby().pushMessage(
 				client,
@@ -62,6 +64,14 @@ export default <IrcEventHandler>function (irc, network) {
 			}, delay);
 			delay += 1000;
 		});
+
+		if (!requestedReconnectPlayback) {
+			network.channels.forEach((chan) => {
+				if (chan.type === ChanType.QUERY) {
+					chan.syncZncPlayback(network);
+				}
+			});
+		}
 	});
 
 	irc.on("socket connected", function () {
@@ -112,6 +122,7 @@ export default <IrcEventHandler>function (irc, network) {
 			chan.users = new Map();
 			chan.state = ChanState.PARTED;
 		});
+		network.resetZncReconnectPlayback();
 
 		if (error) {
 			network.getLobby().pushMessage(

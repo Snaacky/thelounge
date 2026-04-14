@@ -38,6 +38,10 @@ class Chan {
 	data?: any;
 	closed?: boolean;
 	num_users?: number;
+	playbackBoundaryTime?: number;
+	waitingForPlaybackBoundary?: boolean;
+	recentMessageIdOrder?: string[];
+	recentMessageIds?: Set<string>;
 
 	constructor(attr?: Partial<Chan>) {
 		_.defaults(this, attr, {
@@ -53,6 +57,8 @@ class Chan {
 			highlight: 0,
 			users: new Map(),
 			muted: false,
+			recentMessageIdOrder: [],
+			recentMessageIds: new Set(),
 		});
 	}
 
@@ -61,8 +67,13 @@ class Chan {
 	}
 
 	pushMessage(client: Client, msg: Msg, increasesUnread = false) {
+		if (msg.msgid && this.hasSeenMessageId(msg.msgid)) {
+			return false;
+		}
+
 		const chanId = this.id;
 		msg.id = client.idMsg++;
+		this.trackMessageId(msg.msgid);
 
 		// If this channel is open in any of the clients, do not increase unread counter
 		const isOpen = _.find(client.attachedClients, {openChannel: chanId}) !== undefined;
@@ -91,7 +102,7 @@ class Chan {
 		// Never store messages in public mode as the session
 		// is completely destroyed when the page gets closed
 		if (Config.values.public) {
-			return;
+			return true;
 		}
 
 		// showInActive is only processed on "msg", don't need it on page reload
@@ -113,6 +124,8 @@ class Chan {
 				this.dereferencePreviews(deleted);
 			}
 		}
+
+		return true;
 	}
 
 	dereferencePreviews(messages: Msg[]) {
@@ -282,51 +295,117 @@ class Chan {
 			return;
 		}
 
-		if (!client.messageProvider) {
-			if (network.irc.network.cap.isEnabled("znc.in/playback")) {
-				// if we do have a message provider we might be able to only fetch partial history,
-				// so delay the cap in this case.
-				requestZncPlayback(this, network, 0);
-			}
+		const latestKnownMessageTime = getLatestMessageTime(this.messages);
+		this.trackMessageIds(this.messages);
 
+		if (!client.messageProvider) {
+			this.requestZncPlayback(network, latestKnownMessageTime ?? 0);
 			return;
 		}
 
 		try {
-			const messages = client.messageProvider.getMessages(
-				network,
-				this,
-				() => client.idMsg++
-			);
+			this.waitingForPlaybackBoundary = true;
+			this.playbackBoundaryTime = undefined;
 
-			if (messages.length === 0) {
-				if (network.irc!.network.cap.isEnabled("znc.in/playback")) {
-					requestZncPlayback(this, network, 0);
+			const messages = client.messageProvider.getMessages(network, this, () => client.idMsg++);
+
+			if (messages.length > 0) {
+				this.messages = messages.concat(this.messages);
+				this.trackMessageIds(messages);
+
+				if (!this.firstUnread) {
+					this.firstUnread = messages[messages.length - 1].id;
 				}
 
-				return;
+				client.emit("more", {
+					chan: this.id,
+					messages: messages.slice(-100),
+					totalMessages: messages.length,
+				});
 			}
 
-			this.messages = messages.concat(this.messages);
+			const latestStoredMessageTime = getLatestMessageTime(messages);
+			const from = Math.max(latestKnownMessageTime ?? 0, latestStoredMessageTime ?? 0);
+			const playbackEnd = this.consumePlaybackBoundary();
 
-			if (!this.firstUnread) {
-				this.firstUnread = messages[messages.length - 1].id;
-			}
-
-			client.emit("more", {
-				chan: this.id,
-				messages: messages.slice(-100),
-				totalMessages: messages.length,
-			});
-
-			if (network.irc!.network.cap.isEnabled("znc.in/playback")) {
-				const from = Math.floor(messages[messages.length - 1].time.getTime() / 1000);
-
-				requestZncPlayback(this, network, from);
-			}
+			this.requestZncPlayback(network, from, playbackEnd);
 		} catch (err: any) {
+			this.consumePlaybackBoundary();
 			log.error(`Failed to load messages for ${client.name}: ${err.toString()}`);
 		}
+	}
+
+	syncZncPlayback(network: Network) {
+		this.requestZncPlayback(network, getLatestMessageTime(this.messages) ?? 0);
+	}
+
+	recordPlaybackBoundary(time?: Date | number) {
+		if (!this.waitingForPlaybackBoundary || time === undefined) {
+			return;
+		}
+
+		const boundary = time instanceof Date ? time.getTime() : time;
+
+		if (!Number.isFinite(boundary)) {
+			return;
+		}
+
+		this.playbackBoundaryTime =
+			this.playbackBoundaryTime === undefined
+				? boundary
+				: Math.min(this.playbackBoundaryTime, boundary);
+	}
+
+	consumePlaybackBoundary() {
+		const boundary = this.playbackBoundaryTime;
+
+		this.playbackBoundaryTime = undefined;
+		this.waitingForPlaybackBoundary = false;
+
+		return boundary;
+	}
+
+	hasSeenMessageId(msgid: string) {
+		return this.recentMessageIds!.has(msgid);
+	}
+
+	trackMessageIds(messages: Msg[]) {
+		messages.forEach((message) => this.trackMessageId(message.msgid));
+	}
+
+	trackMessageId(msgid?: string) {
+		if (!msgid || this.recentMessageIds!.has(msgid)) {
+			return;
+		}
+
+		this.recentMessageIds!.add(msgid);
+		this.recentMessageIdOrder!.push(msgid);
+
+		if (this.recentMessageIdOrder!.length > 5000) {
+			const removed = this.recentMessageIdOrder!.shift();
+
+			if (removed) {
+				this.recentMessageIds!.delete(removed);
+			}
+		}
+	}
+
+	requestZncPlayback(network: Network, from: number, to?: number) {
+		if (!network.irc) {
+			throw new Error(
+				`requestZncPlayback: no irc field on network "${network.name}", this is a bug`
+			);
+		}
+
+		if (!network.irc.network.cap.isEnabled("znc.in/playback")) {
+			return;
+		}
+
+		if (to !== undefined && from >= to) {
+			return;
+		}
+
+		requestZncPlayback(this, network, from, to);
 	}
 
 	isLoggable() {
@@ -338,14 +417,37 @@ class Chan {
 	}
 }
 
-function requestZncPlayback(channel: Chan, network: Network, from: number) {
-	if (!network.irc) {
-		throw new Error(
-			`requestZncPlayback: no irc field on network "${network.name}", this is a bug`
-		);
+function getLatestMessageTime(messages: Msg[]) {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].isLoggable()) {
+			return messages[i].time.getTime();
+		}
+	}
+}
+
+function requestZncPlayback(channel: Chan, network: Network, from: number, to?: number) {
+	const args = [
+		"ZNC",
+		"*playback",
+		"PLAY",
+		channel.name,
+		formatZncPlaybackTimestamp(from),
+	];
+
+	if (to !== undefined) {
+		args.push(formatZncPlaybackTimestamp(to));
 	}
 
-	network.irc.raw("ZNC", "*playback", "PLAY", channel.name, from.toString());
+	network.irc!.raw(...args);
+}
+
+function formatZncPlaybackTimestamp(time: number) {
+	if (time === 0) {
+		return "0";
+	}
+
+	const timestamp = (time / 1000).toFixed(3);
+	return timestamp.replace(/\.?0+$/, "");
 }
 
 export default Chan;

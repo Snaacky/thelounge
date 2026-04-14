@@ -38,6 +38,7 @@ export default <IrcEventHandler>function (irc, network) {
 				type: MessageType.NICK,
 				new_nick: data.new_nick,
 			});
+			chan.recordPlaybackBoundary(data.time);
 			chan.pushMessage(client, msg);
 
 			chan.removeUser(user);

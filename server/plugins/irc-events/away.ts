@@ -51,6 +51,7 @@ export default <IrcEventHandler>function (irc, network) {
 						from: user,
 					});
 
+					chan.recordPlaybackBoundary(data.time);
 					chan.pushMessage(client, msg);
 
 					break;
